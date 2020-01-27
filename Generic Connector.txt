@@ -1,0 +1,209 @@
+
+public abstract class GenericConnector {
+
+  private static final Logger logger = LoggerFactory.getLogger(GenericConnector.class);
+
+  public static final String DATATYPE_INTEGER = "integer";
+  public static final String DATATYPE_STRING = "string";
+  public static final String DATATYPE_BOOLEAN = "boolean";
+  public static final String DATATYPE_DATE = "date";
+
+  public static final String DATATYPE_INTEGERARRAY = "[]integer";
+  public static final String DATATYPE_STRINGARRAY = "[]string";
+
+  public static final String DBTYPE_MYSQL = "MYSQL";
+
+  private DriverManagerDataSource dataSource;
+
+  private Connection connection;
+
+  protected HashMap<String, String> colTypeMap = new HashMap<String, String>();
+
+  public GenericConnector(DriverManagerDataSource dataSource) throws SQLException {
+    this.setDataSource(dataSource);
+    this.setConnection(dataSource.getConnection());
+    this.initColTypeMap();
+  }
+
+  // ################ abstract methods #######################
+  /**
+   * Set mapping from source data type to CSL-BRE datatypes
+   */
+
+  protected abstract void initColTypeMap();
+
+  public abstract ArrayNode getAllSchemas();
+
+  public abstract ArrayNode getAllTables(String schemaName);
+
+  public abstract ArrayNode getAllColumns(String schemaName, String tableName);
+
+  // ################# Non- Abstract Methods ##################
+
+  public String getAppropriateDataType(String dbDataType) {
+    String mappedVal = this.colTypeMap.get(dbDataType);
+    if (mappedVal == null)
+      mappedVal = DATATYPE_STRING;
+
+    return mappedVal;
+  }
+
+  /**
+   * Executes a query and returns the result as a ArrayNode
+   * 
+   * @param query
+   * @return
+   */
+  public ArrayNode getQueryAsJSON(String query) {
+    logger.debug("Query:" + query);
+    return this.getQueryAsJSON(query, new LinkedList<String>());
+  }
+
+  /**
+   * Executes a query and fetches the specified columns only as an ArrayNode
+   * 
+   * @param query
+   * @param colnames
+   * @return
+   */
+  protected ArrayNode getQueryAsJSON(String query, LinkedList<String> colnames) {
+    ArrayNode retval = new ObjectMapper().createArrayNode();
+    try {
+      Statement sqlStatement = this.getConnection().createStatement();
+      ResultSet rs = sqlStatement.executeQuery(query);
+      if (0 == colnames.size()) {
+        colnames = getAllColumns(rs);
+      }
+      while (rs.next()) {
+        ObjectNode currRec = new ObjectMapper().createObjectNode();
+        for (int i = 0; i < colnames.size(); i++) {
+          String value = rs.getString(colnames.get(i).toString());
+          if (value == null) {
+            value = "";
+          }
+          currRec.put(colnames.get(i).toString(), value);
+        }
+        retval.add(currRec);
+      }
+      rs.close();
+      sqlStatement.close();
+    } catch (Exception e) {
+      logger.error(e.getLocalizedMessage());
+    }
+    return retval;
+  }
+
+  /**
+   * Fetches ALL the columns of a query resultset
+   * 
+   * @param rs
+   * @return
+   */
+  public static LinkedList<String> getAllColumns(ResultSet rs) {
+    LinkedList<String> colList = new LinkedList<String>();
+    try {
+      java.sql.ResultSetMetaData rsmd = rs.getMetaData();
+      int columnCount = rsmd.getColumnCount();
+      for (int i = 1; i <= columnCount; i++) {
+        String colName = rsmd.getColumnLabel(i);
+        colList.add(colName);
+      }
+    } catch (SQLException e) {
+      logger.error(e.getLocalizedMessage());
+    }
+
+    return colList;
+  }
+
+  public int executeUpdate(String query) {
+    int result = -1;
+    try {
+      logger.debug("Query:" + query);
+      result = this.getConnection().createStatement().executeUpdate(query);
+      logger.debug("Query Result:" + result);
+    } catch (SQLException e) {
+      logger.debug(e.getLocalizedMessage());
+    }
+    return result;
+  }
+
+  public void execute(String query) {
+    try {
+      logger.debug("Query:" + query);
+      this.getConnection().createStatement().execute(query);
+    } catch (SQLException e) {
+      logger.debug(e.getLocalizedMessage());
+    }
+  }
+
+  public boolean equals(String dbType, String dbUrl, int dbPort, String dbUsername,
+      String dbPassword) {
+    return this.getDataSource().getUrl().equalsIgnoreCase(getConnectionUrl(dbType, dbUrl, dbPort))
+        && this.getDataSource().getUsername().equalsIgnoreCase(dbUsername)
+        && this.getDataSource().getPassword().equals(dbPassword);
+  }
+
+  public DriverManagerDataSource getDataSource() {
+    return dataSource;
+  }
+
+  public void setDataSource(DriverManagerDataSource dataSource) {
+    this.dataSource = dataSource;
+  }
+
+  public Connection getConnection() {
+    return connection;
+  }
+
+  public void setConnection(Connection connection) {
+    this.connection = connection;
+  }
+
+
+  public static GenericConnector getGenericConnector(String dbType, String dbUrl, int dbPort,
+      String dbUsername, String dbPassword) throws SQLException {
+    logger.trace("Entering getGenericConnector...");
+
+    logger.debug("Connection Information dbType:" + dbType + " | dbUrl:" + dbUrl + " | dbPort:"
+        + dbPort + " | dbUsername:" + dbUsername);
+
+    DriverManagerDataSource dataSource = new DriverManagerDataSource();
+    dataSource.setDriverClassName(getDriverClassName(dbType));
+    dataSource.setUrl(getConnectionUrl(dbType, dbUrl, dbPort));
+    dataSource.setUsername(dbUsername);
+    dataSource.setPassword(dbPassword);
+    GenericConnector genericConnector = null;
+
+    switch (dbType) {
+      case DBTYPE_MYSQL:
+        genericConnector = new MysqlConnector(dataSource);
+    }
+
+    logger.trace("Exiting getGenericConnector\n...");
+    return genericConnector;
+  }
+
+  private static String getDriverClassName(String dbType) {
+    String retVal = "";
+
+    switch (dbType) {
+      case DBTYPE_MYSQL:
+        retVal = "com.mysql.cj.jdbc.Driver";
+    }
+
+    return retVal;
+  }
+
+  private static String getConnectionUrl(String dbType, String dbUrl, int dbPort) {
+    String retVal = "";
+
+    switch (dbType) {
+      case DBTYPE_MYSQL:
+        retVal = "jdbc:mysql://" + dbUrl + ":" + dbPort;
+    }
+
+    return retVal;
+
+  }
+
+}
